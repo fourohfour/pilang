@@ -185,7 +185,6 @@ class Interpreter:
         search = 1
         gname  = 2
         lname  = 3
-        pname  = 10
         number = 4
 
         mode = search
@@ -384,20 +383,6 @@ class Interpreter:
         lptr = len(self.lines) - 1
         toks = self.tokenise(lptr)
         self.parse(lptr, toks)
-
-    def execute(self):
-        global_names = {}
-        stack = [ [[self.program.root()], {}] ]
-        while stack:
-            frame = stack[-1]
-            while frame:
-                node = to_exec.pop(0)
-                if node.nt == NodeType.SEQ:
-                    for s in node.children:
-                        to_exec.append(self.program.node(s))
-
-                if node.nt == NodeType.SCOPE:
-                    stack.append([])
 
     def execute(self):
         nget = self.program.node
