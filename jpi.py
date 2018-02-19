@@ -123,7 +123,7 @@ class Program:
         self.rebase_when(lambda node: node.nt == NodeType.SEQ or node.i == self.cons_stack[-1])
 
     def __repr__(self):
-        return self.root().rec_repr(self, 0)
+        return self.root().rec_repr(self, 0).strip()
 
 class TokenType(Enum):
     GNAME  = 1
@@ -148,7 +148,8 @@ class Token:
         return "({tt}:{val})".format(tt = self.tt.name, val = self.val)
 
 class Interpreter:
-    def __init__(self):
+    def __init__(self, args):
+        self.args    = args
         self.lines   = []
         self.program = Program()
 
@@ -161,6 +162,12 @@ class Interpreter:
         print("Warning: on Line {}".format(lptr + 1))
         print(">>> {}".format(self.lines[lptr].rstrip()))
         print(message + "\n")
+
+    def _rule(self, nl=False):
+        if nl:
+            print("\n=-=-=-=-=-=-=-=-=-=")
+        else:
+            print("=-=-=-=-=-=-=-=-=-=")
 
     def tokenise(self, lptr):
         tokmap = {'[' : TokenType.LBRACK,
@@ -178,6 +185,7 @@ class Interpreter:
         search = 1
         gname  = 2
         lname  = 3
+        pname  = 10
         number = 4
 
         mode = search
@@ -236,6 +244,10 @@ class Interpreter:
                 if c.isdecimal():
                     mode = number
                     builder += c
+                    continue
+
+                if c == '!':
+                    toks.append(Token(TokenType.GNAME, '!', lptr))
                     continue
 
                 self._err(lptr, "Bad character in program '{}'".format(c))
@@ -324,6 +336,11 @@ class Interpreter:
                 if tok.tt in {TokenType.GNAME,
                               TokenType.LNAME,
                               TokenType.NUMBER}:
+
+                    if tok.val == "!":
+                        self._err(lptr, "Cannot use output variable '!' as value.")
+                        break
+
                     if index + 1 < len(toks):
                         if toks[index + 1].tt in {TokenType.PLUS, TokenType.MINUS}:
                             prog.add_active(NodeType.OP, val = toks[index + 1])
@@ -422,7 +439,7 @@ class Interpreter:
                 node_values[node.i] = node_values[nget(node.children[0]).i]
 
             elif node.nt == NodeType.LVALUE:
-                if node.val.val not in var_values:
+                if node.val.val not in var_values and node.val.val != "!":
                     var_values[node.val.val] = None
                     if node.val.tt == TokenType.LNAME:
                         if node.scope_sig not in scope_map:
@@ -432,7 +449,10 @@ class Interpreter:
 
             elif node.nt == NodeType.ASSIGN:
                 lname = nget(node.children[0]).val.val
-                var_values[lname] = node_values[node.children[1]]
+                if lname == "!":
+                    print(node_values[node.children[1]])
+                else:
+                    var_values[lname] = node_values[node.children[1]]
 
             elif node.nt == NodeType.OP:
                 op1 = node_values[node.children[0]]
@@ -483,18 +503,23 @@ class Interpreter:
 
                     to_exec = node.rec_list(i.program) + to_exec
 
-        print("Execution concluded")
-        for var in var_values:
-            print("{} : {}".format(var, var_values[var]))
+        if "globals" in self.args:
+            self._rule()
 
+            for var in var_values:
+                print("{} : {}".format(var, var_values[var]))
+
+            self._rule()
 
 if __name__ == "__main__":
-    i = Interpreter()
+    i = Interpreter([a[2:].lower() for a in sys.argv[1:] if a.startswith("--")])
 
     for line in sys.stdin:
         i.feed(line)
 
-    if "--ast" in [a.lower() for a in sys.argv[1:]]:
-        print(i.program)
+    if "ast" in i.args:
+            i._rule()
+            print(i.program)
+            i._rule()
 
     i.execute()
