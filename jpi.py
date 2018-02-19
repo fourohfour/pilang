@@ -97,27 +97,33 @@ class Program:
         val = self.active_stack.pop()
         if val == self.scope_stack[-1]:
             self.scope_stack.pop()
+        if val == self.cons_stack[-1]:
+            self.cons_stack.pop()
         return val
 
+    def rebase_when(self, checkf):
+        while not checkf(self.node(self.active_stack[-1])):
+            self.conclude_active()
+
+    def conclude_when(self, checkf):
+        self.rebase_when(checkf)
+        self.conclude_active()
+
+
     def conclude_construct(self):
-        construct = self.cons_stack.pop()
-        while self.conclude_active() != construct:
-            continue
+        self.conclude_when(lambda node: node.i == self.cons_stack[-1])
 
     def rebase_construct(self):
-        construct = self.cons_stack[-1]
-        while self.active_stack[-1] != construct:
-            self.conclude_active()
-
+        self.rebase_when(lambda node: node.i == self.cons_stack[-1])
 
     def rebase_sequence(self):
-        while self.node(self.active_stack[-1]).nt != NodeType.SEQ:
-            if self.active_stack[-1] == self.cons_stack[-1]:
-                self.cons_stack.pop()
-            self.conclude_active()
+        self.rebase_when(lambda node: node.nt == NodeType.SEQ)
+
+    def rebase_lineend(self):
+        self.rebase_when(lambda node: node.nt == NodeType.SEQ or node.i == self.cons_stack[-1])
 
     def __repr__(self):
-        return "=-=-= Program =-=-=\n" + self.root().rec_repr(self, 0)
+        return self.root().rec_repr(self, 0)
 
 class TokenType(Enum):
     GNAME  = 1
@@ -239,8 +245,8 @@ class Interpreter:
         prog = self.program
         prog.set_lptr(lptr)
 
-        lvalue = 10
-        assign = 11
+        initial = 10
+        assign  = 11
 
         paren_contents = 20
         scope_sig      = 21
@@ -248,25 +254,34 @@ class Interpreter:
         expr      = 100
         end       = 900
 
-        expect  = lvalue
+        expect  = initial
 
         index = -1
         while (index + 1) < len(toks):
             index += 1
             tok = toks[index]
-            if   expect == lvalue:
+            if   expect == initial:
                 if tok.tt in {TokenType.GNAME, TokenType.LNAME}:
                     prog.add_active(NodeType.ASSIGN)
                     prog.add_leaf(NodeType.LVALUE, val = tok)
                     expect = assign
+                    continue
+
+                if tok.tt in {TokenType.RPAREN, TokenType.RBRACK}:
+                    index -= 1
+                    expect = expr
+                    continue
+
                 else:
-                    self._err(lptr, "Expected assignment")
+                    self._err(lptr, "Malformed line")
                     terminate()
 
             elif expect == assign:
                 if tok.tt == TokenType.COLON:
                     prog.add_active(NodeType.EXPR)
                     expect = expr
+                    continue
+
                 else:
                     self._err(lptr, "Expected assignment")
                     terminate()
@@ -275,8 +290,14 @@ class Interpreter:
                 if tok.tt == TokenType.LPAREN:
                     expect = paren_contents
                     continue
+
                 if tok.tt == TokenType.RPAREN:
+                    if prog.construct().nt not in {NodeType.EXPR, NodeType.SCOPE}:
+                        self._err(lptr, "Found ')' but next construct to close is not an expression or scope.")
+                        terminate()
+
                     prog.conclude_construct()
+                    continue
 
                 if tok.tt == TokenType.LBRACK:
                     prog.add_active(NodeType.CYCLE, construct = True)
@@ -284,6 +305,10 @@ class Interpreter:
                     continue
 
                 if tok.tt == TokenType.RBRACK:
+                    if prog.construct().nt != NodeType.CYCLE:
+                        self._err(lptr, "Found ']' but next construct to close is not a cycle.")
+                        terminate()
+
                     prog.conclude_construct()
                     continue
 
@@ -335,7 +360,7 @@ class Interpreter:
                 self._err(lptr, "Internal Parser Error: Uncovered expectation")
                 terminate()
 
-        prog.rebase_sequence()
+        prog.rebase_lineend()
 
     def feed(self, line):
         self.lines.append(line)
@@ -462,8 +487,14 @@ class Interpreter:
         for var in var_values:
             print("{} : {}".format(var, var_values[var]))
 
-i = Interpreter()
-for line in sys.stdin:
-    i.feed(line)
 
-i.execute()
+if __name__ == "__main__":
+    i = Interpreter()
+
+    for line in sys.stdin:
+        i.feed(line)
+
+    if "--ast" in [a.lower() for a in sys.argv[1:]]:
+        print(i.program)
+
+    i.execute()
