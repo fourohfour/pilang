@@ -15,7 +15,10 @@ class NodeType(Enum):
     ASSIGN    = 30   # An assignment
     LVALUE    = 31   # Left side value for an assignment
     CYCLE     = 40   # A Cycle
-    PREDICATE = 41   # Predicate for a Cycle
+    CONDEX    = 50   # Conditional Expression
+    IF        = 51   # If
+    ELSE      = 52   # Else
+    PREDICATE = 99   # Predicate
     EXPR      = 100  # An expression (potentially containing arith.)
 
 class Node:
@@ -159,6 +162,8 @@ class TokenType(Enum):
     PLUS   = 20   # +
     MINUS  = 21   # -
     AT     = 30   # @
+    QUOI   = 40   # ?
+    SEMI   = 41   # ;
 
 
 class Token:
@@ -206,7 +211,9 @@ class Interpreter:
                   '@' : TokenType.AT    ,
                   '+' : TokenType.PLUS  ,
                   '-' : TokenType.MINUS ,
-                  ':' : TokenType.COLON }
+                  ':' : TokenType.COLON ,
+                  '?' : TokenType.QUOI  ,
+                  ';' : TokenType.SEMI  ,}
 
         line = self.lines[lptr]
         toks = []
@@ -304,7 +311,8 @@ class Interpreter:
         assign         = 11    # Expect an assignment colon
         paren_contents = 20    # Expect contents of ()
         scope_ret      = 21    # Expect a scope return to follow @
-        expr           = 100   # Expect an expression
+        expr_val       = 100   # Expect a value in an expression
+        expr_op        = 101   # Expect an operation in an expression
         end            = 900   # Expect newline
 
         expect  = initial
@@ -327,7 +335,7 @@ class Interpreter:
                 # It may also start with ')' or ']' - but we want this to be handled by expr
                 # Fallthrough to `expect == expr`
                 if tok.tt in {TokenType.RPAREN, TokenType.RBRACK}:
-                    expect = expr
+                    expect = expr_op
                 else:
                     self._err(lptr, "Malformed line")
                     terminate()
@@ -336,50 +344,22 @@ class Interpreter:
                 # Only a COLON can be `assign` (succeed an LVALUE)
                 if tok.tt == TokenType.COLON:
                     prog.add_active(NodeType.EXPR)
-                    expect = expr
+                    expect = expr_val
                     continue
 
                 else:
                     self._err(lptr, "Expected assignment")
                     terminate()
 
-            if expect == expr:
-                # Brackets and Parens need to be handled - they cause `expect` changes
-                if tok.tt == TokenType.LPAREN:
-                    expect = paren_contents
-                    continue
-
-                if tok.tt == TokenType.RPAREN:
-                    if prog.construct().nt not in {NodeType.EXPR, NodeType.SCOPE}:
-                        self._err(lptr, "Found ')' but next construct to close is not an expression or scope.")
-                        terminate()
-
-                    prog.conclude_construct()
-                    continue
-
-                if tok.tt == TokenType.LBRACK:
-                    prog.add_active(NodeType.CYCLE, construct = True)
-                    prog.add_active(NodeType.PREDICATE, val = prog.construct().i)
+            if expect == expr_val:
+                # Handle start of condexes
+                if tok.tt == TokenType.QUOI:
+                    prog.add_active(NodeType.CONDEX, construct = True)
+                    prog.add_active(NodeType.IF    )
+                    prog.add_active(NodeType.PREDICATE,
+                                    val = (lambda ev: ev > 0, prog.construct().i))
                     prog.add_active(NodeType.EXPR)
                     continue
-
-                if tok.tt == TokenType.RBRACK:
-                    if prog.construct().nt != NodeType.CYCLE:
-                        self._err(lptr, "Found ']' but next construct to close is not a cycle.")
-                        terminate()
-
-                    prog.conclude_construct()
-                    continue
-
-                # Only allow a colon if we're at the top level of a CYCLE
-                if tok.tt == TokenType.COLON:
-                    if prog.construct().nt == NodeType.CYCLE:
-                        prog.rebase_construct()
-                        prog.add_active(NodeType.EXPR)
-                        continue
-                    else:
-                        self._err(lptr, "Colon found in non-cyclic expression")
-                        break
 
                 # Handle Values
                 if tok.tt in {TokenType.GNAME,
@@ -393,14 +373,98 @@ class Interpreter:
 
                     # Special cases aside we can just add as a leaf
                     prog.add_leaf(NodeType.VALUE, val = tok)
+                    expect = expr_op
                     continue
 
+                if tok.tt == TokenType.LPAREN:
+                    expect = paren_contents
+                    continue
+
+                if tok.tt == TokenType.LBRACK:
+                    prog.add_active(NodeType.CYCLE, construct = True)
+                    prog.add_active(NodeType.PREDICATE,
+                                    val = (lambda ev: ev <= 0, prog.construct().i))
+                    prog.add_active(NodeType.EXPR)
+                    continue
+
+
+            if expect == expr_op:
                 # Handle Operators
                 # Note that arithmatic parsing is handled during execution
                 if tok.tt in {TokenType.PLUS, TokenType.MINUS}:
                     prog.add_leaf(NodeType.OP, val = tok)
+                    expect = expr_val
                     continue
 
+                # Brackets and Parens need to be handled - they cause `expect` changes
+                implied_colon = False
+                if tok.tt in {TokenType.LPAREN, TokenType.LBRACK}:
+                    if prog.construct().nt in {NodeType.CYCLE, NodeType.CONDEX}:
+                        self._warn(lptr, "Missing colon in construct")
+                        index -= 1
+                        implied_colon = True
+                        expect = expr_val
+                    else:
+                        self._err(lptr, "Malformed Expression - Found '(' or '[' in bad position.")
+                        terminate()
+
+                if tok.tt == TokenType.RPAREN:
+                    while prog.construct().nt == NodeType.CONDEX:
+                        prog.conclude_construct()
+
+                    if prog.construct().nt not in {NodeType.EXPR, NodeType.SCOPE}:
+                        self._err(lptr, "Found ')' but next construct to close is not an expression or scope.")
+                        terminate()
+
+                    prog.conclude_construct()
+                    continue
+
+
+                if tok.tt == TokenType.RBRACK:
+                    while prog.construct().nt == NodeType.CONDEX:
+                        prog.conclude_construct()
+
+                    if prog.construct().nt != NodeType.CYCLE:
+                        self._err(lptr, "Found ']' but next construct to close is not a cycle.")
+                        terminate()
+
+                    prog.conclude_construct()
+                    continue
+
+                # Only allow a colon if we're at the top level of a CYCLE
+                if tok.tt == TokenType.COLON or implied_colon:
+                    if prog.construct().nt in {NodeType.CYCLE, NodeType.CONDEX}:
+                        if prog.construct().nt == NodeType.CONDEX:
+                            prog.rebase_when(lambda n: n.nt in {NodeType.IF, NodeType.ELSE})
+                            if prog.active().nt == NodeType.ELSE:
+                                self._err(lptr, "Cannot have predicate in else statement")
+                                terminate()
+                        else:
+                            prog.rebase_construct()
+                        prog.add_active(NodeType.EXPR)
+                        expect = expr_val
+                        continue
+                    else:
+                        self._err(lptr, "Colon found outside of cycle or conditional expression")
+                        break
+
+                if tok.tt == TokenType.QUOI:
+                    if prog.construct().nt == NodeType.CONDEX:
+                        prog.rebase_construct()
+                        prog.add_active(NodeType.PREDICATE,
+                                        val = [lambda ev: ev > 0, prog.construct().i])
+                        prog.add_active(NodeType.IF  )
+                        prog.add_active(NodeType.EXPR)
+                        expect = expr_val
+                        continue
+
+                if tok.tt == TokenType.SEMI:
+                    if prog.construct().nt == NodeType.CONDEX:
+                        prog.rebase_construct()
+                        prog.add_active(NodeType.ELSE)
+                        prog.add_active(NodeType.EXPR)
+                        expect = expr_val
+                        continue
 
             if expect == paren_contents:
                 # An '@' implies a scope
@@ -410,10 +474,10 @@ class Interpreter:
                     continue
 
                 # Otherwise, just a normal expression
-                # We decrement the index to allow `expect = expr` to handle it
+                # We decrement the index to allow `expect = expr_val` to handle it
                 else:
                     prog.add_active(NodeType.EXPR, construct = True)
-                    expect = expr
+                    expect = expr_val
                     index -= 1
                     continue
 
@@ -436,8 +500,16 @@ class Interpreter:
             self._err(lptr, "Internal Parser Error: Uncovered expectation")
             terminate()
 
+        if expect not in {initial, end, expr_op}:
+            self._warn(lptr, "weird expect at nl {}".format(expect))
+
         # Return to the nearest sequence or construct - concluding assignments etc.
-        prog.rebase_lineend()
+        while prog.active().nt != NodeType.SEQ:
+            if prog.active().nt == NodeType.ELSE:
+                prog.conclude_construct()
+            elif prog.active().i == prog.construct().i:
+                break
+            prog.conclude_active()
 
     # Lines are fed in one at a time, and are tokenised and parsed
     def feed(self, line):
@@ -599,7 +671,6 @@ class Interpreter:
                     node_values[node.i] = var_values[node.val.val]
 
                 else:
-                    print(scope_map)
                     self._err(node.lptr, "{} is not an in-scope local variable.".format(node.val.val))
                     terminate()
 
@@ -612,20 +683,17 @@ class Interpreter:
                         del var_values[var]
                     del scope_map[node.scope_sig]
 
-            # If the Predicate fails, we jump the expression
-            # This is so we don't execute the body n+1 times
-            # The predicates' failure is propogated upwards
+            # If the predicate value matches a test, it blocks until a specified node
             elif node.nt == NodeType.PREDICATE:
-                node_values[node.i] = node_values[node.children[0]]
-                if node_values[node.i] <= 0:
-                    jump_node = node.val
+                result = node.val[0](node_values[node.children[0]])
+                node_values[node.i] = result
+                if result:
+                    jump_node = node.val[1]
 
             elif node.nt == NodeType.CYCLE:
-                test = node_values[node.children[0]]
-
                 # If the body never executed we need to propogate an empty list
-                if test <= 0:
-                    if node.children[1] not in node_values:
+                if node_values[node.children[0]]:
+                    if node.i not in node_values:
                         node_values[node.i] = []
 
                 # When test doesn't fail, the computed value gets pushed
@@ -636,7 +704,31 @@ class Interpreter:
                     else:
                         node_values[node.i] = [node_values[node.children[1]]]
 
+                    child_indexes = [c.i for c in node.rec_list(i.program) if c.i != node.i]
+                    for ind in child_indexes:
+                        if ind in node_values:
+                            del node_values[ind]
                     to_exec = node.rec_list(i.program) + to_exec
+
+            elif node.nt == NodeType.CONDEX:
+                if node.i in node_values:
+                    node_values[node.i] = node_values[node_values[node.i]]
+                    continue
+
+                for c in node.children:
+                    block = nget(c)
+                    if block.nt == NodeType.IF:
+                        p = block.children[0]
+                        if node_values[p]:
+                            to_exec = nget(block.children[1]).rec_list(i.program) + [node] + to_exec
+                            node_values[node.i] = block.children[1]
+                            break
+
+                    elif block.nt == NodeType.ELSE:
+                        node_values[node.i] = node_values[block.i]
+
+            elif node.nt == NodeType.ELSE:
+                node_values[node.i] = node_values[node.children[0]]
 
         # Print globals on conclusion when --globals passed to program
         if "globals" in self.args:
