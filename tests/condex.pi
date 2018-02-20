@@ -1,7 +1,7 @@
-a : 4
-b : 3
+a : 2
+b : 1
 
-result : [(6 - b) : (@comp
+result : [(4 - b) : (@comp
                      'comp' : ? (a - b) : 1 ? (a - (b - 1)) : 2 ; 3
                      b : b + 1
                      )
