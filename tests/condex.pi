@@ -1,0 +1,10 @@
+a : 4
+b : 3
+
+result : [(6 - b) : (@comp
+                     'comp' : ? (a - b) : 1 ? (a - (b - 1)) : 2 ; 3
+                     b : b + 1
+                     )
+         ]
+
+! : result

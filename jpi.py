@@ -451,9 +451,9 @@ class Interpreter:
                 if tok.tt == TokenType.QUOI:
                     if prog.construct().nt == NodeType.CONDEX:
                         prog.rebase_construct()
+                        prog.add_active(NodeType.IF)
                         prog.add_active(NodeType.PREDICATE,
                                         val = [lambda ev: ev > 0, prog.construct().i])
-                        prog.add_active(NodeType.IF  )
                         prog.add_active(NodeType.EXPR)
                         expect = expr_val
                         continue

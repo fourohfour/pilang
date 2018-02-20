@@ -12,6 +12,10 @@ echo "\n\nArithmatic = 21  "
 echo "-----------------"
 cat ./tests/arith.pi | python3 jpi.py
 
-echo "\n\nMax: [5, 4, 3, 3, 3] "
+echo "\n\nIf / Else: [5, 4, 3, 3] "
 echo "-----------------"
 cat ./tests/if.pi | python3 jpi.py
+
+echo "\n\nIf / Elif / Else: [1, 2, 3]"
+echo "-----------------"
+cat ./tests/condex.pi | python3 jpi.py
