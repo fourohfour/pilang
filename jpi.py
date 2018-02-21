@@ -357,7 +357,9 @@ class Interpreter:
                     prog.add_active(NodeType.CONDEX, construct = True)
                     prog.add_active(NodeType.IF    )
                     prog.add_active(NodeType.PREDICATE,
-                                    val = (lambda ev: ev > 0, prog.construct().i))
+                                    val = (lambda ev: ev > 0 ,
+                                           prog.construct().i,
+                                           prog.active().i))
                     prog.add_active(NodeType.EXPR)
                     continue
 
@@ -453,7 +455,9 @@ class Interpreter:
                         prog.rebase_construct()
                         prog.add_active(NodeType.IF)
                         prog.add_active(NodeType.PREDICATE,
-                                        val = [lambda ev: ev > 0, prog.construct().i])
+                                        val = (lambda ev: ev > 0 ,
+                                               prog.construct().i,
+                                               prog.active().i))
                         prog.add_active(NodeType.EXPR)
                         expect = expr_val
                         continue
@@ -689,6 +693,8 @@ class Interpreter:
                 node_values[node.i] = result
                 if result:
                     jump_node = node.val[1]
+                elif len(node.val) > 2:
+                    jump_node = node.val[2]
 
             elif node.nt == NodeType.CYCLE:
                 # If the body never executed we need to propogate an empty list
